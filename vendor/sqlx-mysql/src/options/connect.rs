@@ -70,14 +70,36 @@ impl ConnectOptions for MySqlConnectOptions {
         }
 
         if self.set_names {
+            // `utf8mb4` (the default) only exists from MySQL 5.5; older servers reject it
+            // with "Unknown character set". Use their widest Unicode charset instead. An
+            // explicit collation is left alone: it names a charset of its own.
+            //
+            // Only major.minor is compared: MariaDB 10+ announces itself as
+            // "5.5.5-10.x.y-MariaDB", whose patch ("5-10") does not parse and reads as 0.
+            // An unparseable version (major 0) is not assumed to be old.
+            let (major, minor, _) = conn.inner.stream.server_version;
+            let charset = if self.charset.eq_ignore_ascii_case("utf8mb4")
+                && self.collation.is_none()
+                && major != 0
+                && (major, minor) < (5, 5)
+            {
+                log::warn!(
+                    "server {:?} predates utf8mb4; using the utf8 character set",
+                    conn.inner.stream.server_version
+                );
+                "utf8"
+            } else {
+                self.charset.as_str()
+            };
+
             // As it turns out, we don't _have_ to set a collation if we don't want to.
             // We can let the server choose the default collation for the charset.
             let set_names = if let Some(collation) = &self.collation {
-                format!(r#"NAMES {} COLLATE {collation}"#, self.charset,)
+                format!(r#"NAMES {charset} COLLATE {collation}"#)
             } else {
                 // Leaves the default collation up to the server,
                 // but ensures statements and results are encoded using the proper charset.
-                format!("NAMES {}", self.charset)
+                format!("NAMES {charset}")
             };
 
             options.push(set_names);

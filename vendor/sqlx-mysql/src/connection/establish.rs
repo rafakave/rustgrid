@@ -5,6 +5,7 @@ use crate::common::StatementCache;
 use crate::connection::{tls, MySqlConnectionInner, MySqlStream, MAX_PACKET_SIZE};
 use crate::error::Error;
 use crate::net::{Socket, WithSocket};
+use crate::protocol::auth::AuthPlugin;
 use crate::protocol::connect::{
     AuthSwitchRequest, AuthSwitchResponse, Handshake, HandshakeResponse,
 };
@@ -62,7 +63,16 @@ impl<'a> DoHandshake<'a> {
 
         let handshake: Handshake = stream.recv_packet().await?.decode()?;
 
-        let mut plugin = handshake.auth_plugin;
+        // Servers older than MySQL 5.5.7 predate pluggable authentication: their handshake
+        // names no plugin. With CLIENT_SECURE_CONNECTION (MySQL 4.1+) they still expect the
+        // `mysql_native_password` scramble, so fall back to it rather than sending an empty
+        // auth response, which the server rejects as "(using password: NO)".
+        let mut plugin = handshake.auth_plugin.or_else(|| {
+            handshake
+                .server_capabilities
+                .contains(Capabilities::SECURE_CONNECTION)
+                .then_some(AuthPlugin::MySqlNativePassword)
+        });
         let nonce = handshake.auth_plugin_data;
 
         // FIXME: server version parse is a bit ugly
@@ -123,6 +133,16 @@ impl<'a> DoHandshake<'a> {
                     let _ok = packet.ok()?;
 
                     break;
+                }
+
+                // A lone 0xfe is the pre-4.1 "old password" request, sent for an account
+                // hashed with OLD_PASSWORD(). That scheme is broken and is not supported.
+                0xfe if packet.len() == 1 => {
+                    return Err(err_protocol!(
+                        "the server requested pre-4.1 `mysql_old_password` authentication, \
+                         which is not supported; re-hash the account's password with the \
+                         4.1+ PASSWORD() function"
+                    ));
                 }
 
                 0xfe => {

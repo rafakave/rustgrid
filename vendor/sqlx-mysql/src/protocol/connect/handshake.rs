@@ -197,3 +197,29 @@ fn test_decode_handshake_mariadb_10_4_7() {
         &[116, 54, 76, 92, 106, 34, 100, 83, 85, 49, 52, 79, 112, 104, 57, 34, 60, 72, 53, 110,]
     );
 }
+
+#[test]
+fn test_decode_handshake_mysql_5_1_without_plugin_auth() {
+    // Laid out like MySQL 5.1's greeting: no CLIENT_PLUGIN_AUTH, so the upper capability
+    // bytes, the auth-data length and the reserved bytes are 13 zeros and no plugin name
+    // follows the scramble.
+    const HANDSHAKE_MYSQL_5_1: &[u8] = b"\n5.1.73-log\x00\x0b\x00\x00\x00t6L\\j\"dS\x00\xff\xf7\x08\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00U14Oph9\"<H5n\x00";
+
+    let p = Handshake::decode(HANDSHAKE_MYSQL_5_1.into()).unwrap();
+
+    assert_eq!(p.protocol_version, 10);
+    assert_eq!(&*p.server_version, "5.1.73-log");
+    assert!(p
+        .server_capabilities
+        .contains(Capabilities::SECURE_CONNECTION | Capabilities::PROTOCOL_41));
+    assert!(!p.server_capabilities.contains(Capabilities::PLUGIN_AUTH));
+    assert!(!p.server_capabilities.contains(Capabilities::SSL));
+
+    // No plugin is named; `establish` falls back to `mysql_native_password` for this.
+    assert!(p.auth_plugin.is_none());
+
+    assert_eq!(
+        &*p.auth_plugin_data.into_iter().collect::<Vec<_>>(),
+        &[116, 54, 76, 92, 106, 34, 100, 83, 85, 49, 52, 79, 112, 104, 57, 34, 60, 72, 53, 110,]
+    );
+}
