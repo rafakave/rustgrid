@@ -21,6 +21,75 @@ const BACKUPS_FILE: &str = "backups.json";
 const BACKUPS_DIR: &str = "backups";
 const DATABASES_VERSION: u32 = 1;
 const DATABASES_FILE: &str = "databases.json";
+const SESSION_FILE: &str = "session.json";
+const SESSION_VERSION: u32 = 1;
+
+/// What the main window had open when it last saved its session, restored on the next start
+/// ("return to where I was"). Tables are restored lazily, once their connection is connected.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceSession {
+    /// Profile ids of the connections that were open.
+    #[serde(default)]
+    pub connections: Vec<String>,
+    /// The query tabs, in tab order.
+    #[serde(default)]
+    pub queries: Vec<SessionQuery>,
+    /// The table / view data tabs, in tab order.
+    #[serde(default)]
+    pub tables: Vec<SessionTable>,
+    /// The tab that was active.
+    #[serde(default)]
+    pub active: Option<SessionActive>,
+}
+
+/// One query tab of a [`WorkspaceSession`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionQuery {
+    #[serde(default)]
+    pub connection_id: Option<String>,
+    #[serde(default)]
+    pub database: Option<String>,
+    #[serde(default)]
+    pub schema: Option<String>,
+    /// The saved query's name and file, when the tab is bound to one.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub saved_path: Option<PathBuf>,
+    /// The editor text. `None` for a saved query without unsaved edits, which reloads from its
+    /// file; otherwise the text itself ("hot exit": unsaved edits survive a restart).
+    #[serde(default)]
+    pub sql: Option<String>,
+    #[serde(default)]
+    pub caret: usize,
+}
+
+/// One table / view data tab of a [`WorkspaceSession`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTable {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    #[serde(default)]
+    pub is_view: bool,
+    #[serde(default)]
+    pub page_index: u64,
+}
+
+/// The active tab of a [`WorkspaceSession`]: an index into its `queries` or `tables`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "index", rename_all = "snake_case")]
+pub enum SessionActive {
+    Query(usize),
+    Table(usize),
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionFile {
+    version: u32,
+    #[serde(flatten)]
+    session: WorkspaceSession,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -350,6 +419,35 @@ impl ConfigStore {
         self.root.join(SETTINGS_FILE)
     }
 
+    pub fn session_path(&self) -> PathBuf {
+        self.root.join(SESSION_FILE)
+    }
+
+    /// The last saved workspace session; empty when there is none or it cannot be read (a damaged
+    /// session must never stop the app from starting).
+    pub fn load_session(&self) -> WorkspaceSession {
+        fs::read_to_string(self.session_path())
+            .ok()
+            .and_then(|contents| serde_json::from_str::<SessionFile>(&contents).ok())
+            .map(|file| file.session)
+            .unwrap_or_default()
+    }
+
+    /// Save the workspace session atomically (write a temporary file, then rename it over the old
+    /// one), so a crash mid-write never leaves a half-written session.
+    pub fn save_session(&self, session: &WorkspaceSession) -> ConfigResult<()> {
+        fs::create_dir_all(&self.root)?;
+        let file = SessionFile {
+            version: SESSION_VERSION,
+            session: session.clone(),
+        };
+        let contents = serde_json::to_string_pretty(&file)?;
+        let temporary = self.root.join(format!("{SESSION_FILE}.tmp"));
+        fs::write(&temporary, contents)?;
+        fs::rename(&temporary, self.session_path())?;
+        Ok(())
+    }
+
     pub fn queries_path(&self) -> PathBuf {
         self.root.join(QUERIES_FILE)
     }
@@ -612,6 +710,37 @@ mod tests {
 
     fn keys(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn a_workspace_session_round_trips_and_tolerates_missing_fields() {
+        let session = WorkspaceSession {
+            connections: vec!["conn-1".to_string()],
+            queries: vec![SessionQuery {
+                connection_id: Some("conn-1".to_string()),
+                sql: Some("SELECT 1;".to_string()),
+                caret: 9,
+                ..Default::default()
+            }],
+            tables: vec![SessionTable {
+                connection_id: "conn-1".to_string(),
+                database: "shop".to_string(),
+                table: "orders".to_string(),
+                is_view: false,
+                page_index: 2,
+            }],
+            active: Some(SessionActive::Table(0)),
+        };
+        let json = serde_json::to_string(&SessionFile {
+            version: SESSION_VERSION,
+            session: session.clone(),
+        })
+        .expect("serialize");
+        let back: SessionFile = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back.session, session);
+
+        let minimal: SessionFile = serde_json::from_str(r#"{ "version": 1 }"#).expect("minimal");
+        assert_eq!(minimal.session, WorkspaceSession::default());
     }
 
     #[test]

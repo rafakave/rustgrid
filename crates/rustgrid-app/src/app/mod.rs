@@ -1915,6 +1915,15 @@ const FIELD_FILTER_CHROME_HEIGHT: f32 = 124.0;
 pub struct AppView {
     registry: Arc<DriverRegistry>,
     config: Arc<ConfigStore>,
+    /// The last session's tables not yet reopened (their connection is not connected yet), and
+    /// its active tab; see `workspace.rs`.
+    pending_session_tables: Vec<rustgrid_config::SessionTable>,
+    pending_session_active: Option<rustgrid_config::SessionActive>,
+    /// Whether the last session was restored (before that, nothing is saved, so an early save
+    /// cannot overwrite it), the fingerprint last written, and whether a save is scheduled.
+    session_restored: bool,
+    session_signature_saved: u64,
+    session_save_pending: bool,
     runtime: Arc<Runtime>,
     connections: Vec<ConnectionNode>,
     grids: Vec<Entity<GridView>>,
@@ -2458,6 +2467,7 @@ mod user_create;
 mod view;
 mod view_view;
 mod widgets;
+mod workspace;
 
 use info_pane::{InfoPane, SidebarHost};
 
@@ -2562,6 +2572,16 @@ impl AppView {
         // Every user command's keystrokes: built-in defaults, replaced by the settings' overrides,
         // and re-bound when the Options window applies a change.
         let bound_keys = keymap::bind_keymap(cx, &settings.shortcuts, &[]);
+        // Restore the last session once the view exists, and save it on quit.
+        cx.spawn(async move |this, cx| {
+            let _ = this.update(cx, |view, cx| view.restore_session(cx));
+        })
+        .detach();
+        cx.on_app_quit(|view, cx| {
+            view.save_session_now(cx);
+            async {}
+        })
+        .detach();
         let app = cx.weak_entity();
         let app_entity = cx.entity();
         let tree_pane = cx.new(|cx| TreePane::new(app.clone(), cx));
@@ -2579,6 +2599,11 @@ impl AppView {
         Self {
             registry,
             config,
+            pending_session_tables: Vec::new(),
+            pending_session_active: None,
+            session_restored: false,
+            session_signature_saved: 0,
+            session_save_pending: false,
             runtime,
             connections,
             grids: Vec::new(),
@@ -3807,6 +3832,7 @@ fn install_editor_highlight_theme(theme: Theme, cx: &mut App) {
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.track_session(cx);
         self.theme = Theme::resolve(self.theme_setting, window.appearance());
         // Keep gpui-kit's own theme in lockstep with the app palette so its components (and the
         // shadcn tokens they read) follow the user's Light/Dark/System setting.

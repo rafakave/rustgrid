@@ -370,6 +370,8 @@ impl AppView {
                             node.expanded = true;
                         }
                         view.load_databases(index, cx);
+                        // Reopen the last session's tables on this connection.
+                        view.restore_session_tables(index, cx);
                     }
                     Err(error) => {
                         let authentication = matches!(&error, Error::Authentication(_));

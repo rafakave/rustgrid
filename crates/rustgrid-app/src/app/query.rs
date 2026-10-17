@@ -147,7 +147,7 @@ impl AppView {
         self.open_query_with(Some(connection_index), database, Some(schema), cx);
     }
 
-    fn open_query_with(
+    pub(super) fn open_query_with(
         &mut self,
         connection_index: Option<usize>,
         database: Option<String>,
