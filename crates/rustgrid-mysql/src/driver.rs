@@ -192,9 +192,14 @@ async fn connect(config: &ConnectionConfig, engine: Engine) -> Result<Box<dyn Co
     if let Some(seconds) = settings.connect_timeout.filter(|seconds| *seconds > 0) {
         pool_options = pool_options.acquire_timeout(Duration::from_secs(seconds));
     }
-    if let Some(seconds) = settings.keepalive.filter(|seconds| *seconds > 0) {
-        pool_options = pool_options.idle_timeout(Duration::from_secs(seconds));
-    }
+    // Without a configured value, close pooled connections after a short idle time: a server
+    // with a short `wait_timeout` (or a NAT / firewall) drops idle sessions silently, and
+    // reusing such a dead socket can stall a query for minutes before the pool gives up.
+    let idle_seconds = settings
+        .keepalive
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_IDLE_SECONDS);
+    pool_options = pool_options.idle_timeout(Duration::from_secs(idle_seconds));
 
     // Per-session settings applied to every pooled connection.
     let query_timeout = settings.query_timeout.filter(|seconds| *seconds > 0);
@@ -242,6 +247,11 @@ async fn connect(config: &ConnectionConfig, engine: Engine) -> Result<Box<dyn Co
 
     Ok(Box::new(MysqlConnection::new(pool, engine, tunnel)))
 }
+
+/// How long a pooled connection may sit idle when the profile sets no keep-alive. The pool's
+/// reaper runs on this period, so a connection is closed within twice this time, below the
+/// short `wait_timeout` settings some servers use (under a minute).
+const DEFAULT_IDLE_SECONDS: u64 = 20;
 
 fn map_connect_error(error: sqlx::Error) -> Error {
     if let sqlx::Error::Database(database_error) = &error

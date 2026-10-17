@@ -104,8 +104,19 @@ impl<'a> DoHandshake<'a> {
             server_version_patch,
         );
 
+        // Servers older than MySQL 5.5 send only the lower 16 capability bits in their greeting
+        // (the upper ones are reserved zeros) although every 4.1+ server supports multiple
+        // statements and results. Masking with the greeting would drop them, so a script of two
+        // statements reaches the server as one and fails with a syntax error (1064).
+        let legacy_greeting = handshake.server_capabilities.contains(Capabilities::PROTOCOL_41)
+            && handshake.server_capabilities.bits() >> 16 == 0;
+        let requested = stream.capabilities;
         stream.capabilities &= handshake.server_capabilities;
         stream.capabilities |= Capabilities::PROTOCOL_41;
+        if legacy_greeting {
+            stream.capabilities |=
+                requested & (Capabilities::MULTI_STATEMENTS | Capabilities::MULTI_RESULTS);
+        }
 
         let mut stream = tls::maybe_upgrade(stream, self.options).await?;
 

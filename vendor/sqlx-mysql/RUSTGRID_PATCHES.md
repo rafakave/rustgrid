@@ -21,6 +21,10 @@ it verbatim; every change since is listed here. Licence: MIT OR Apache-2.0 (the 
    charset is replaced, only when no collation was chosen, and only by major.minor (MariaDB 10+
    reports `5.5.5-10.x.y-MariaDB`).
 4. A decode test for a MySQL 5.1-style handshake (`src/protocol/connect/handshake.rs`).
+5. **Multiple statements on servers older than 5.5** (`src/connection/establish.rs`). Their
+   greeting carries only the lower 16 capability bits, so masking the client's flags with it
+   dropped `CLIENT_MULTI_STATEMENTS` / `CLIENT_MULTI_RESULTS` (which every 4.1+ server supports)
+   and a two-statement script failed with error 1064. They are kept for such greetings.
 
 ## Removing it
 
