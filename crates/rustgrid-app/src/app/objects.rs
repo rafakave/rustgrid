@@ -987,6 +987,7 @@ impl ObjectPane {
             mode: ViewMode::default(),
             typeahead: String::new(),
             typeahead_at: None,
+            nav_generation: 0,
         }
     }
 
@@ -1988,7 +1989,24 @@ impl ObjectPane {
         let Some(key) = self.visible_keys.get(index).cloned() else {
             return;
         };
-        self.set_object_selection_one(&key, cx);
+        // Move the highlight now (only this list redraws); the info pane and toolbar follow once
+        // the keys settle, so holding an arrow key does not load every object it passes.
+        if let Some(app) = self.app.upgrade() {
+            app.update(cx, |app, _| app.objects_selection.select_one(key.clone()));
+        }
+        self.selected = Some(key.clone());
+        self.nav_generation += 1;
+        let generation = self.nav_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NAV_SETTLE).await;
+            let _ = this.update(cx, |pane, cx| {
+                if pane.nav_generation == generation {
+                    pane.sync_single_from_app(cx);
+                    pane.notify_app(cx);
+                }
+            });
+        })
+        .detach();
         let bounds = self
             .app
             .upgrade()

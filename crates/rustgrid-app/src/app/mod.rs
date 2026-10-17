@@ -169,6 +169,11 @@ gpui::actions!(
 /// Key context applied to the object list, for its navigation commands.
 const OBJECT_LIST_CONTEXT: &str = "ObjectList";
 
+/// How long keyboard navigation waits after the last move before it refreshes the rest of the app
+/// (info pane, toolbar). Holding an arrow key then only redraws the list itself, like VS Code,
+/// which fires its expensive selection events only once the focus settles.
+const NAV_SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// Key context applied to the table designer, so Ctrl+S saves it and Tab walks its cells while the
 /// designer (or one of its cell editors) holds focus.
 const DESIGNER_CONTEXT: &str = "TableDesigner";
@@ -1404,6 +1409,9 @@ struct ObjectPane {
     /// The name typed so far to jump to an object, and when its last key arrived.
     typeahead: String,
     typeahead_at: Option<std::time::Instant>,
+    /// Bumped by every keyboard move; the deferred info-pane / toolbar sync runs only for the
+    /// latest.
+    nav_generation: u64,
 }
 
 /// The tab strip above the content pane (Object / tables / queries). Owns its own horizontal
@@ -1445,6 +1453,8 @@ struct TreePane {
     /// The name typed so far to jump to a row, and when its last key arrived.
     typeahead: String,
     typeahead_at: Option<std::time::Instant>,
+    /// Bumped by every keyboard move; the deferred app-wide refresh runs only for the latest.
+    nav_generation: u64,
 }
 
 /// Which bespoke text field of a grid owns the platform text input (IME / `WM_CHAR`). The page /

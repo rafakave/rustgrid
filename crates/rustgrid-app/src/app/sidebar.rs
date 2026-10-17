@@ -345,6 +345,7 @@ impl TreePane {
             row_bounds: Rc::new(std::cell::RefCell::new(std::collections::HashMap::new())),
             typeahead: String::new(),
             typeahead_at: None,
+            nav_generation: 0,
         }
     }
 
@@ -390,19 +391,32 @@ impl TreePane {
         self.selected = Some(id.clone());
         self.selected_table = row.table.clone();
         // A selectable row (connection / group) becomes the single selection; any other row clears
-        // the multi-selection.
+        // the multi-selection. Only the tree redraws now; the rest of the app catches up once the
+        // keys settle, so holding an arrow key stays smooth.
         if let Some(app) = self.app.upgrade() {
             let selectable = list_ops::is_tree_selectable(&id);
-            app.update(cx, |app, cx| {
+            app.update(cx, |app, _| {
                 if selectable {
                     app.tree_selection.select_one(id.clone());
                 } else {
                     app.tree_selection.clear();
                 }
-                cx.notify();
             });
         }
         self.reveal(&id);
+        self.nav_generation += 1;
+        let generation = self.nav_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NAV_SETTLE).await;
+            let _ = this.update(cx, |tree, cx| {
+                if tree.nav_generation == generation
+                    && let Some(app) = tree.app.upgrade()
+                {
+                    app.update(cx, |_, cx| cx.notify());
+                }
+            });
+        })
+        .detach();
         cx.notify();
     }
 
