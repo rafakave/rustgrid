@@ -673,6 +673,8 @@ impl AppView {
                 }
                 view.completion_generation = view.completion_generation.wrapping_add(1);
                 view.remember_databases(index);
+                // Reopen the last session's databases on this connection.
+                view.restore_session_databases(index, cx);
                 view.notify_object_pane(cx);
                 cx.notify();
                 for (database_index, database_name, tables, routines) in reload {
@@ -940,7 +942,7 @@ impl AppView {
     }
 
     /// Create (or replace) the object pane for a database and return the entity handle.
-    fn open_object_pane(
+    pub(super) fn open_object_pane(
         &mut self,
         connection_index: usize,
         database_index: usize,

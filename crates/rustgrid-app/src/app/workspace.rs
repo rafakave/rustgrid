@@ -10,7 +10,9 @@
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
-use rustgrid_config::{SessionActive, SessionQuery, SessionTable, WorkspaceSession};
+use rustgrid_config::{
+    SessionActive, SessionDatabase, SessionQuery, SessionTable, WorkspaceSession,
+};
 
 use super::*;
 
@@ -71,12 +73,44 @@ impl AppView {
             });
         }
         tables.extend(self.pending_session_tables.iter().cloned());
+        let mut databases = self.open_session_databases();
+        databases.extend(self.pending_session_databases.iter().cloned());
+        let current_database = self
+            .object_pane
+            .as_ref()
+            .and_then(|pane| {
+                let pane = pane.read(cx);
+                let node = self.connections.get(pane.connection_index)?;
+                Some(SessionDatabase {
+                    connection_id: node.profile.id.clone(),
+                    database: self.database_name(pane.connection_index, pane.database_index)?,
+                })
+            })
+            .or_else(|| self.pending_session_current.clone());
         WorkspaceSession {
             connections,
             queries,
             tables,
             active,
+            databases,
+            current_database,
         }
+    }
+
+    /// The databases open in the tree right now.
+    fn open_session_databases(&self) -> Vec<SessionDatabase> {
+        let mut open = Vec::new();
+        for node in &self.connections {
+            if let Loadable::Loaded(databases) = &node.databases {
+                for database in databases.iter().filter(|database| database.opened) {
+                    open.push(SessionDatabase {
+                        connection_id: node.profile.id.clone(),
+                        database: database.name.clone(),
+                    });
+                }
+            }
+        }
+        open
     }
 
     /// A cheap fingerprint of what the session records (not the caret, which moves constantly).
@@ -109,6 +143,14 @@ impl AppView {
         }
         (self.active_query, self.active_grid).hash(&mut hasher);
         self.pending_session_tables.len().hash(&mut hasher);
+        self.open_session_databases().hash(&mut hasher);
+        self.object_pane
+            .as_ref()
+            .map(|pane| {
+                let pane = pane.read(cx);
+                (pane.connection_index, pane.database_index)
+            })
+            .hash(&mut hasher);
         hasher.finish()
     }
 
@@ -177,6 +219,8 @@ impl AppView {
         }
         self.pending_session_tables = session.tables;
         self.pending_session_active = session.active;
+        self.pending_session_databases = session.databases;
+        self.pending_session_current = session.current_database;
         if let Some(SessionActive::Query(index)) = session.active
             && index < self.queries.len()
         {
@@ -200,6 +244,67 @@ impl AppView {
         cx.notify();
     }
 
+    /// After connection `index` listed its databases: reopen the session's open databases on it
+    /// (loading their objects, as a double-click would) and show the current database's objects,
+    /// without leaving the tab that is active, so a new query defaults to that database again.
+    pub(super) fn restore_session_databases(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        let Some(profile_id) = self
+            .connections
+            .get(index)
+            .map(|node| node.profile.id.clone())
+        else {
+            return;
+        };
+        let (mine, rest): (Vec<SessionDatabase>, Vec<SessionDatabase>) = self
+            .pending_session_databases
+            .drain(..)
+            .partition(|database| database.connection_id == profile_id);
+        self.pending_session_databases = rest;
+        let current = self
+            .pending_session_current
+            .take_if(|current| current.connection_id == profile_id);
+        if mine.is_empty() && current.is_none() {
+            return;
+        }
+        let Some(connection) = self.connection_arc(index) else {
+            return;
+        };
+        for wanted in mine.iter().chain(current.iter()) {
+            let Some(database_index) = self.database_index_by_name(index, &wanted.database) else {
+                continue;
+            };
+            let mut load = false;
+            if let Some(node) = self.connections.get_mut(index)
+                && let Loadable::Loaded(databases) = &mut node.databases
+                && let Some(database) = databases.get_mut(database_index)
+                && !database.opened
+            {
+                database.opened = true;
+                database.expanded = true;
+                load = matches!(database.tables, Loadable::Idle | Loadable::Failed(_));
+            }
+            if load {
+                self.load_tables(
+                    index,
+                    database_index,
+                    connection.clone(),
+                    wanted.database.clone(),
+                    cx,
+                );
+            }
+        }
+        if let Some(current) = current
+            && let Some(database_index) = self.database_index_by_name(index, &current.database)
+            && !self.driver_supports(index, DriverCapability::Schemas)
+        {
+            self.open_object_pane(index, database_index, None, Category::Tables, cx);
+            self.tree_pane.update(cx, |tree, _| {
+                tree.selected = Some(format!("db-{index}-{database_index}"));
+            });
+        }
+        cx.notify();
+    }
+
     /// After connection `index` connects: reopen the session's tables on it (lazily, now that
     /// they can load), returning to the tab that was active.
     pub(super) fn restore_session_tables(&mut self, index: usize, cx: &mut Context<'_, Self>) {
@@ -211,7 +316,9 @@ impl AppView {
             return;
         };
         let active_table = match self.pending_session_active {
-            Some(SessionActive::Table(position)) => self.pending_session_tables.get(position).cloned(),
+            Some(SessionActive::Table(position)) => {
+                self.pending_session_tables.get(position).cloned()
+            }
             _ => None,
         };
         let (mine, rest): (Vec<SessionTable>, Vec<SessionTable>) = self
@@ -232,7 +339,10 @@ impl AppView {
                 cx,
             );
             if table.page_index > 0
-                && let Some(grid) = self.active_grid.and_then(|grid| self.grids.get(grid)).cloned()
+                && let Some(grid) = self
+                    .active_grid
+                    .and_then(|grid| self.grids.get(grid))
+                    .cloned()
             {
                 let page = table.page_index;
                 grid.update(cx, |grid, cx| {

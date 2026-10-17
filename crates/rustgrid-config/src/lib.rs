@@ -40,6 +40,20 @@ pub struct WorkspaceSession {
     /// The tab that was active.
     #[serde(default)]
     pub active: Option<SessionActive>,
+    /// The databases that were open in the connection tree, reopened when their connection
+    /// connects.
+    #[serde(default)]
+    pub databases: Vec<SessionDatabase>,
+    /// The database whose objects the object list showed (Navicat's current database).
+    #[serde(default)]
+    pub current_database: Option<SessionDatabase>,
+}
+
+/// A database of a [`WorkspaceSession`], by its connection's profile id and its name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionDatabase {
+    pub connection_id: String,
+    pub database: String,
 }
 
 /// One query tab of a [`WorkspaceSession`].
@@ -730,6 +744,14 @@ mod tests {
                 page_index: 2,
             }],
             active: Some(SessionActive::Table(0)),
+            databases: vec![SessionDatabase {
+                connection_id: "conn-1".to_string(),
+                database: "shop".to_string(),
+            }],
+            current_database: Some(SessionDatabase {
+                connection_id: "conn-1".to_string(),
+                database: "shop".to_string(),
+            }),
         };
         let json = serde_json::to_string(&SessionFile {
             version: SESSION_VERSION,

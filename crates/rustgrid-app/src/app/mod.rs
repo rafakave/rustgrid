@@ -1919,6 +1919,9 @@ pub struct AppView {
     /// its active tab; see `workspace.rs`.
     pending_session_tables: Vec<rustgrid_config::SessionTable>,
     pending_session_active: Option<rustgrid_config::SessionActive>,
+    /// The last session's open databases and current database, until their connection connects.
+    pending_session_databases: Vec<rustgrid_config::SessionDatabase>,
+    pending_session_current: Option<rustgrid_config::SessionDatabase>,
     /// Whether the last session was restored (before that, nothing is saved, so an early save
     /// cannot overwrite it), the fingerprint last written, and whether a save is scheduled.
     session_restored: bool,
@@ -2601,6 +2604,8 @@ impl AppView {
             config,
             pending_session_tables: Vec::new(),
             pending_session_active: None,
+            pending_session_databases: Vec::new(),
+            pending_session_current: None,
             session_restored: false,
             session_signature_saved: 0,
             session_save_pending: false,
