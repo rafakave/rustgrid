@@ -18,19 +18,23 @@ use super::{
     BACKUP_LIST_CONTEXT, CopyBackupFile, CopyQueryFile, CopyStatusSql, DESIGNER_CONTEXT,
     GRID_STATUS_CONTEXT, PasteBackupFile, PasteQueryFile, QUERY_EDITOR_CONTEXT, QUERY_LIST_CONTEXT,
     RenameBackupFile, RenameQueryFile, RunQuery, RunSelectedQuery, SaveDesign, SaveQuery,
-    SelectAllBackups, SelectAllOccurrences, SelectAllQueries, SelectAllStatusSql,
+    SelectAllBackups, SelectAllOccurrences, SelectAllQueries, SelectAllStatusSql, TREE_CONTEXT,
+    TreeCollapse, TreeDown, TreeEnd, TreeExpand, TreeHome, TreeOpen, TreePageDown, TreePageUp,
+    TreeRename, TreeSelectAll, TreeUp,
 };
 
 /// Where a command lives, for grouping the 快捷键 page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CommandGroup {
+    ConnectionTree,
     QueryEditor,
     Designer,
     Lists,
 }
 
 impl CommandGroup {
-    pub(super) const ALL: [CommandGroup; 3] = [
+    pub(super) const ALL: [CommandGroup; 4] = [
+        CommandGroup::ConnectionTree,
         CommandGroup::QueryEditor,
         CommandGroup::Designer,
         CommandGroup::Lists,
@@ -39,6 +43,7 @@ impl CommandGroup {
     /// The i18n key of the group's heading.
     pub(super) fn label_key(self) -> &'static str {
         match self {
+            CommandGroup::ConnectionTree => "keymap.group.tree",
             CommandGroup::QueryEditor => "keymap.group.query_editor",
             CommandGroup::Designer => "keymap.group.designer",
             CommandGroup::Lists => "keymap.group.lists",
@@ -79,8 +84,54 @@ macro_rules! bind {
     };
 }
 
+/// A connection-tree navigation command bound to `keys` everywhere.
+macro_rules! tree_command {
+    ($id:literal, $label:literal, $keys:expr, $action:expr) => {
+        Command {
+            id: $id,
+            label_key: $label,
+            group: CommandGroup::ConnectionTree,
+            context: TREE_CONTEXT,
+            defaults: $keys,
+            mac_defaults: None,
+            bind: bind!($action),
+        }
+    };
+}
+
 /// Every rebindable command, in 快捷键-page order within each group.
 pub(super) const COMMANDS: &[Command] = &[
+    tree_command!("tree.up", "keymap.tree.up", &["up"], TreeUp),
+    tree_command!("tree.down", "keymap.tree.down", &["down"], TreeDown),
+    tree_command!(
+        "tree.page_up",
+        "keymap.tree.page_up",
+        &["pageup"],
+        TreePageUp
+    ),
+    tree_command!(
+        "tree.page_down",
+        "keymap.tree.page_down",
+        &["pagedown"],
+        TreePageDown
+    ),
+    tree_command!("tree.home", "keymap.tree.home", &["home"], TreeHome),
+    tree_command!("tree.end", "keymap.tree.end", &["end"], TreeEnd),
+    tree_command!("tree.expand", "keymap.tree.expand", &["right"], TreeExpand),
+    tree_command!(
+        "tree.collapse",
+        "keymap.tree.collapse",
+        &["left"],
+        TreeCollapse
+    ),
+    tree_command!("tree.open", "keymap.tree.open", &["enter"], TreeOpen),
+    tree_command!("tree.rename", "keymap.tree.rename", &["f2"], TreeRename),
+    tree_command!(
+        "tree.select_all",
+        "keymap.tree.select_all",
+        &["secondary-a"],
+        TreeSelectAll
+    ),
     Command {
         id: "query.run",
         label_key: "query.run",

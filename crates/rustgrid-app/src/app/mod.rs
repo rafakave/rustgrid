@@ -123,6 +123,30 @@ gpui::actions!(gridstatus, [CopyStatusSql, SelectAllStatusSql]);
 // `on_key_down`, so the grid claims it the same way the data grid does).
 gpui::actions!(designer, [SaveDesign, NextDesignerCell, PrevDesignerCell]);
 
+// Connection-tree keyboard navigation (see `sidebar.rs`). They are keymap commands, so every key is
+// rebindable; typing a name to jump to it stays on the tree's `on_key_down`.
+gpui::actions!(
+    tree,
+    [
+        TreeUp,
+        TreeDown,
+        TreePageUp,
+        TreePageDown,
+        TreeHome,
+        TreeEnd,
+        TreeExpand,
+        TreeCollapse,
+        TreeOpen,
+        TreeRename,
+        TreeSelectAll
+    ]
+);
+
+/// Key context applied to the connection tree's scroll area, for its navigation commands. The
+/// in-place rename editor sits deeper (`ConnectionTree > Input`), so its own keys win while it is
+/// open.
+const TREE_CONTEXT: &str = "ConnectionTree";
+
 /// Key context applied to the table designer, so Ctrl+S saves it and Tab walks its cells while the
 /// designer (or one of its cell editors) holds focus.
 const DESIGNER_CONTEXT: &str = "TableDesigner";
@@ -1382,6 +1406,18 @@ struct TreePane {
     /// The multi-selected connection/group row keys this frame, mirrored from `AppView` for row
     /// highlighting.
     selection: BTreeSet<String>,
+    /// Every drawn row of the last frame, in draw order: what keyboard navigation walks (see
+    /// `sidebar::NavRow`). Rebuilt each render from `nav_build`, which the row renderers fill.
+    nav_rows: Vec<sidebar::NavRow>,
+    nav_build: std::cell::RefCell<Vec<sidebar::NavRow>>,
+    /// The nesting depth of the rows being drawn, for `NavRow::depth`.
+    nav_depth: std::cell::Cell<usize>,
+    /// Each drawn row's window-space bounds from the last prepaint, keyed by row id, so a
+    /// keyboard move can scroll the selection into view.
+    row_bounds: Rc<std::cell::RefCell<std::collections::HashMap<String, Bounds<Pixels>>>>,
+    /// The name typed so far to jump to a row, and when its last key arrived.
+    typeahead: String,
+    typeahead_at: Option<std::time::Instant>,
 }
 
 /// Which bespoke text field of a grid owns the platform text input (IME / `WM_CHAR`). The page /
