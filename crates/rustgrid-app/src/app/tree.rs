@@ -1489,6 +1489,19 @@ impl AppView {
         self.active_grid = index;
         self.active_query = None;
         self.active_design = None;
+        // The grid takes the keyboard focus, so arrows / Tab work right after a tab switch.
+        self.grid_focus_pending = index.is_some();
+        // The toolbar section follows the tab: Tables for a table, Views for a view.
+        if let Some(grid) = index.and_then(|index| self.grids.get(index)) {
+            let state = &grid.read(cx).state;
+            if state.sql.is_none() {
+                self.main_tab = if state.is_view {
+                    MainTab::Views
+                } else {
+                    MainTab::Tables
+                };
+            }
+        }
         cx.notify();
     }
 

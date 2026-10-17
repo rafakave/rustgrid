@@ -15,30 +15,37 @@ use gpui::{App, KeyBinding, Keystroke, NoAction};
 use gpui_kit::component::input::ShowCompletions;
 
 use super::{
-    BACKUP_LIST_CONTEXT, CopyBackupFile, CopyQueryFile, CopyStatusSql, DESIGNER_CONTEXT,
-    GRID_STATUS_CONTEXT, OBJECT_LIST_CONTEXT, ObjectDown, ObjectEnd, ObjectHome, ObjectLeft,
+    BACKUP_LIST_CONTEXT, CloseActiveTab, CopyBackupFile, CopyQueryFile, CopyStatusSql,
+    DESIGNER_CONTEXT, DuplicateLines, GRID_CONTEXT, GRID_STATUS_CONTEXT, GridEditValue,
+    GridFirstCell, GridLastCell, GridNextCell, GridPageDown, GridPageUp, GridPrevCell, GridRefresh,
+    GridRowEnd, GridRowStart, GridSelectPageDown, GridSelectPageUp, MoveLinesDown, MoveLinesUp,
+    NewQueryTab, NextTab, OBJECT_LIST_CONTEXT, ObjectDown, ObjectEnd, ObjectHome, ObjectLeft,
     ObjectOpen, ObjectPageDown, ObjectPageUp, ObjectRename, ObjectRight, ObjectSelectAll, ObjectUp,
-    PasteBackupFile, PasteQueryFile, QUERY_EDITOR_CONTEXT, QUERY_LIST_CONTEXT, RenameBackupFile,
-    RenameQueryFile, RunQuery, RunSelectedQuery, SaveDesign, SaveQuery, SelectAllBackups,
-    SelectAllOccurrences, SelectAllQueries, SelectAllStatusSql, TREE_CONTEXT, TreeCollapse,
-    TreeDown, TreeEnd, TreeExpand, TreeHome, TreeOpen, TreePageDown, TreePageUp, TreeRename,
-    TreeSelectAll, TreeUp,
+    PasteBackupFile, PasteQueryFile, PrevTab, QUERY_EDITOR_CONTEXT, QUERY_LIST_CONTEXT,
+    RenameBackupFile, RenameQueryFile, RunQuery, RunSelectedQuery, SaveDesign, SaveQuery,
+    SelectAllBackups, SelectAllOccurrences, SelectAllQueries, SelectAllStatusSql, SwapLineUp,
+    TREE_CONTEXT, ToggleComment, TreeCollapse, TreeDown, TreeEnd, TreeExpand, TreeHome, TreeOpen,
+    TreePageDown, TreePageUp, TreeRename, TreeSelectAll, TreeUp, WORKSPACE_CONTEXT,
 };
 
 /// Where a command lives, for grouping the 快捷键 page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CommandGroup {
+    General,
     ConnectionTree,
     ObjectList,
+    TableGrid,
     QueryEditor,
     Designer,
     Lists,
 }
 
 impl CommandGroup {
-    pub(super) const ALL: [CommandGroup; 5] = [
+    pub(super) const ALL: [CommandGroup; 7] = [
+        CommandGroup::General,
         CommandGroup::ConnectionTree,
         CommandGroup::ObjectList,
+        CommandGroup::TableGrid,
         CommandGroup::QueryEditor,
         CommandGroup::Designer,
         CommandGroup::Lists,
@@ -47,6 +54,8 @@ impl CommandGroup {
     /// The i18n key of the group's heading.
     pub(super) fn label_key(self) -> &'static str {
         match self {
+            CommandGroup::General => "keymap.group.general",
+            CommandGroup::TableGrid => "keymap.group.grid",
             CommandGroup::ConnectionTree => "keymap.group.tree",
             CommandGroup::ObjectList => "keymap.group.objects",
             CommandGroup::QueryEditor => "keymap.group.query_editor",
@@ -70,7 +79,7 @@ pub(super) struct Command {
     /// Built-in keystrokes on macOS, where they differ from `defaults`.
     pub mac_defaults: Option<&'static [&'static str]>,
     /// Builds the binding of `keystroke` in `context`.
-    pub bind: fn(&str, &'static str) -> KeyBinding,
+    pub bind: fn(&str, Option<&'static str>) -> KeyBinding,
 }
 
 impl Command {
@@ -85,7 +94,7 @@ impl Command {
 
 macro_rules! bind {
     ($action:expr) => {
-        |keystroke, context| KeyBinding::new(keystroke, $action, Some(context))
+        |keystroke, context| KeyBinding::new(keystroke, $action, context)
     };
 }
 
@@ -124,6 +133,34 @@ macro_rules! object_command {
         nav_command!(
             CommandGroup::ObjectList,
             OBJECT_LIST_CONTEXT,
+            $id,
+            $label,
+            $keys,
+            $action
+        )
+    };
+}
+
+/// A table-grid command.
+macro_rules! grid_command {
+    ($id:literal, $label:literal, $keys:expr, $action:expr) => {
+        nav_command!(
+            CommandGroup::TableGrid,
+            GRID_CONTEXT,
+            $id,
+            $label,
+            $keys,
+            $action
+        )
+    };
+}
+
+/// A query-editor command.
+macro_rules! editor_command {
+    ($id:literal, $label:literal, $keys:expr, $action:expr) => {
+        nav_command!(
+            CommandGroup::QueryEditor,
+            QUERY_EDITOR_CONTEXT,
             $id,
             $label,
             $keys,
@@ -205,6 +242,132 @@ pub(super) const COMMANDS: &[Command] = &[
         "keymap.objects.select_all",
         &["secondary-a"],
         ObjectSelectAll
+    ),
+    Command {
+        id: "general.new_query",
+        label_key: "keymap.general.new_query",
+        group: CommandGroup::General,
+        context: WORKSPACE_CONTEXT,
+        defaults: &["ctrl-q"],
+        // ⌘Q quits on macOS.
+        mac_defaults: Some(&["cmd-shift-n"]),
+        bind: bind!(NewQueryTab),
+    },
+    nav_command!(
+        CommandGroup::General,
+        WORKSPACE_CONTEXT,
+        "general.close_tab",
+        "keymap.general.close_tab",
+        &["secondary-w"],
+        CloseActiveTab
+    ),
+    nav_command!(
+        CommandGroup::General,
+        WORKSPACE_CONTEXT,
+        "general.next_tab",
+        "keymap.general.next_tab",
+        &["ctrl-tab", "ctrl-pagedown"],
+        NextTab
+    ),
+    nav_command!(
+        CommandGroup::General,
+        WORKSPACE_CONTEXT,
+        "general.prev_tab",
+        "keymap.general.prev_tab",
+        &["ctrl-shift-tab", "ctrl-pageup"],
+        PrevTab
+    ),
+    grid_command!(
+        "grid.edit_value",
+        "keymap.grid.edit_value",
+        &["f2"],
+        GridEditValue
+    ),
+    grid_command!("grid.refresh", "keymap.grid.refresh", &["f5"], GridRefresh),
+    grid_command!(
+        "grid.page_up",
+        "keymap.grid.page_up",
+        &["pageup"],
+        GridPageUp
+    ),
+    grid_command!(
+        "grid.page_down",
+        "keymap.grid.page_down",
+        &["pagedown"],
+        GridPageDown
+    ),
+    grid_command!(
+        "grid.select_page_up",
+        "keymap.grid.select_page_up",
+        &["shift-pageup"],
+        GridSelectPageUp
+    ),
+    grid_command!(
+        "grid.select_page_down",
+        "keymap.grid.select_page_down",
+        &["shift-pagedown"],
+        GridSelectPageDown
+    ),
+    grid_command!(
+        "grid.row_start",
+        "keymap.grid.row_start",
+        &["home"],
+        GridRowStart
+    ),
+    grid_command!("grid.row_end", "keymap.grid.row_end", &["end"], GridRowEnd),
+    grid_command!(
+        "grid.first_cell",
+        "keymap.grid.first_cell",
+        &["secondary-home"],
+        GridFirstCell
+    ),
+    grid_command!(
+        "grid.last_cell",
+        "keymap.grid.last_cell",
+        &["secondary-end"],
+        GridLastCell
+    ),
+    grid_command!(
+        "grid.next_cell",
+        "keymap.grid.next_cell",
+        &["tab"],
+        GridNextCell
+    ),
+    grid_command!(
+        "grid.prev_cell",
+        "keymap.grid.prev_cell",
+        &["shift-tab"],
+        GridPrevCell
+    ),
+    editor_command!(
+        "query.toggle_comment",
+        "keymap.query.toggle_comment",
+        &["secondary-k", "secondary-/"],
+        ToggleComment
+    ),
+    editor_command!(
+        "query.duplicate",
+        "keymap.query.duplicate",
+        &["secondary-d"],
+        DuplicateLines
+    ),
+    editor_command!(
+        "query.swap_line_up",
+        "keymap.query.swap_line_up",
+        &["secondary-t"],
+        SwapLineUp
+    ),
+    editor_command!(
+        "query.move_lines_up",
+        "keymap.query.move_lines_up",
+        &["alt-up"],
+        MoveLinesUp
+    ),
+    editor_command!(
+        "query.move_lines_down",
+        "keymap.query.move_lines_down",
+        &["alt-down"],
+        MoveLinesDown
     ),
     Command {
         id: "query.run",
@@ -442,6 +605,12 @@ pub(super) fn conflicts(
         .collect()
 }
 
+/// The gpui key context a command binds in: none for workspace-wide commands, so they fire
+/// whatever has focus.
+fn binding_context(context: &'static str) -> Option<&'static str> {
+    (context != WORKSPACE_CONTEXT).then_some(context)
+}
+
 /// The keystrokes [`bind_keymap`] registered, each with its key context, so the next call can
 /// shadow them.
 pub(super) type BoundKeys = Vec<(String, &'static str)>;
@@ -457,14 +626,18 @@ pub(super) fn bind_keymap(
     let mut bindings = Vec::new();
     for (keystroke, context) in previous {
         if Keystroke::parse(keystroke).is_ok() {
-            bindings.push(KeyBinding::new(keystroke, NoAction {}, Some(context)));
+            bindings.push(KeyBinding::new(
+                keystroke,
+                NoAction {},
+                binding_context(context),
+            ));
         }
     }
     let mut bound = Vec::new();
     for command in COMMANDS {
         for keystroke in keys_for(command, overrides) {
             if Keystroke::parse(&keystroke).is_ok() {
-                bindings.push((command.bind)(&keystroke, command.context));
+                bindings.push((command.bind)(&keystroke, binding_context(command.context)));
                 bound.push((keystroke, command.context));
             }
         }

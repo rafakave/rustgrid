@@ -258,6 +258,15 @@ struct SettingsFile {
     /// commands the user changed are stored; an empty list unbinds the command.
     #[serde(default)]
     shortcuts: BTreeMap<String, Vec<String>>,
+    /// Keep the object list's search text when switching tabs (off: switching clears it).
+    #[serde(default)]
+    preserve_object_search: bool,
+    /// The most statements one query run may execute (0: no limit).
+    #[serde(default = "default_max_statements")]
+    max_statements_per_run: u32,
+    /// Stop a script at its first failing statement (off: run the rest and report each).
+    #[serde(default)]
+    stop_on_error: bool,
     /// Version 11's 运行 keystroke. Read so an upgrade keeps it (folded into `shortcuts`), never
     /// written.
     #[serde(default, skip_serializing)]
@@ -316,6 +325,14 @@ fn fold_legacy_shortcuts(
     shortcuts
 }
 
+/// The default cap on statements per query run: a whole dump pasted into the editor by mistake
+/// stops before it runs (Navicat caps it too). Options → General changes it; 0 removes it.
+pub const DEFAULT_MAX_STATEMENTS: u32 = 20;
+
+fn default_max_statements() -> u32 {
+    DEFAULT_MAX_STATEMENTS
+}
+
 #[derive(Debug, Clone)]
 pub struct AppSettings {
     pub theme: ThemeSetting,
@@ -347,6 +364,13 @@ pub struct AppSettings {
     /// keystroke strings (`"secondary-r"`). Commands not listed keep their built-in keystrokes;
     /// an empty list unbinds the command.
     pub shortcuts: BTreeMap<String, Vec<String>>,
+    /// Keep the object list's search text when switching tabs (off: switching clears it, so
+    /// coming back shows every object).
+    pub preserve_object_search: bool,
+    /// The most statements one query run may execute, against accidents (0: no limit).
+    pub max_statements_per_run: u32,
+    /// Stop a script at its first failing statement (off: run the rest and report each).
+    pub stop_on_error: bool,
 }
 
 impl Default for AppSettings {
@@ -368,6 +392,9 @@ impl Default for AppSettings {
             grid_show_comments: false,
             grid_show_types: false,
             shortcuts: BTreeMap::new(),
+            preserve_object_search: false,
+            max_statements_per_run: DEFAULT_MAX_STATEMENTS,
+            stop_on_error: false,
         }
     }
 }
@@ -601,6 +628,9 @@ impl ConfigStore {
                 file.run_shortcut,
                 file.run_selected_shortcut,
             ),
+            preserve_object_search: file.preserve_object_search,
+            max_statements_per_run: file.max_statements_per_run,
+            stop_on_error: file.stop_on_error,
         })
     }
 
@@ -624,6 +654,9 @@ impl ConfigStore {
             grid_show_comments: settings.grid_show_comments,
             grid_show_types: settings.grid_show_types,
             shortcuts: settings.shortcuts.clone(),
+            preserve_object_search: settings.preserve_object_search,
+            max_statements_per_run: settings.max_statements_per_run,
+            stop_on_error: settings.stop_on_error,
             run_shortcut: None,
             run_selected_shortcut: None,
         };

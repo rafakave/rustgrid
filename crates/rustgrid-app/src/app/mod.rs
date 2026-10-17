@@ -41,8 +41,8 @@ use crate::runtime::Runtime;
 use crate::session::{
     Category, CategoryExpansion, CellRange, CellSelection, ConnectionNode, ConnectionStatus,
     DatabaseNode, EditAction, GridFieldLayout, GridState, Loadable, QueryResultPlan,
-    QueryResultSummary, QueryTab, RoutineTab, RoutineTabState, SortRule, ViewExplainTab, ViewTab,
-    ViewTabState, compute_column_widths, page_column_widths,
+    QueryResultSummary, QueryTab, RoutineTab, RoutineTabState, RunEntry, RunScope, SortRule,
+    ViewExplainTab, ViewTab, ViewTabState, compute_column_widths, page_column_widths,
 };
 use crate::sql::{self, SqlToken};
 use crate::theme::{ConnectionColor, Theme};
@@ -109,9 +109,46 @@ gpui::actions!(
         RunSelectedQuery,
         SaveQuery,
         AcceptCompletion,
-        SelectAllOccurrences
+        SelectAllOccurrences,
+        ToggleComment,
+        DuplicateLines,
+        SwapLineUp,
+        MoveLinesUp,
+        MoveLinesDown
     ]
 );
+
+// Workspace-wide commands, handled on the main window's root (`WORKSPACE_CONTEXT`), so they work
+// from any pane.
+gpui::actions!(workspace, [NewQueryTab, CloseActiveTab, NextTab, PrevTab]);
+
+/// The keymap's marker for a workspace-wide command: bound with no key context, so it fires
+/// whatever has focus (or nothing), and handled at app level (`AppView::new`).
+const WORKSPACE_CONTEXT: &str = "Workspace";
+
+// Table-grid keyboard commands (the arrow keys stay on the grid's `on_key_down`). Shift variants
+// extend the selection.
+gpui::actions!(
+    gridnav,
+    [
+        GridRefresh,
+        GridEditValue,
+        GridPageUp,
+        GridPageDown,
+        GridSelectPageUp,
+        GridSelectPageDown,
+        GridRowStart,
+        GridRowEnd,
+        GridFirstCell,
+        GridLastCell,
+        GridNextCell,
+        GridPrevCell
+    ]
+);
+
+/// Key context on the table grid (the in-place cell editor sits deeper, in `GridCell`, so its
+/// own Tab / Home / End keep working while a cell is being edited).
+const GRID_CONTEXT: &str = "TableGrid";
 
 // The grid status bar's selectable SQL line. `Root` binds `ctrl-c` (copy) and `ctrl-a`
 // (select-all), which would otherwise consume the keystroke before the line sees it; binding our
@@ -1254,7 +1291,16 @@ struct ContextMenu {
     position: Point<Pixels>,
 }
 
-#[derive(Clone, Copy)]
+/// A stable identity for an open tab (its grid / query / design id), so the opening order survives
+/// the index shifts of closing other tabs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TabKey {
+    Grid(u64),
+    Query(u64),
+    Design(u64),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum TabTarget {
     Grid(usize),
     Query(usize),
@@ -1488,6 +1534,10 @@ struct GridView {
     /// The cell pressed on mouse-down; if the button is released without dragging to another
     /// cell, a single click opens its editor.
     cell_press: Option<(usize, usize)>,
+    /// Whether the pressed cell was already the single selected cell (a click then edits it).
+    cell_press_reselect: bool,
+    /// F2's value editor panel, when open (see `grid_value.rs`).
+    value_editor: Option<grid_value::ValueEditor>,
     cell_dragged: bool,
 
     cell_editor: Option<CellEditor>,
@@ -1931,6 +1981,9 @@ pub struct AppView {
     connections: Vec<ConnectionNode>,
     grids: Vec<Entity<GridView>>,
     designs: Vec<Entity<design::TableDesignView>>,
+    /// The open tabs in the order they were opened, shared by the tab bar and Ctrl+Tab. Reconciled
+    /// on read (`ordered_tabs`): closed tabs drop out, new ones join at the end.
+    tab_sequence: RefCell<Vec<TabKey>>,
     queries: Vec<QueryTab>,
     active_design: Option<usize>,
     next_design_id: u64,
@@ -1953,6 +2006,8 @@ pub struct AppView {
     query_rename_focus_pending: bool,
     /// Focus target for the query file list, so F2 / Ctrl+C / Ctrl+V reach it.
     query_list_focus: FocusHandle,
+    /// A repaint is scheduled for the running query's timer.
+    query_timer_scheduled: bool,
     /// The Queries 详细列表's current sort column and direction.
     query_sort: QuerySort,
     /// The Queries 平铺网格's horizontal scroll state.
@@ -2024,6 +2079,10 @@ pub struct AppView {
     save_query_focus_pending: bool,
     query_focus: FocusHandle,
     query_focus_pending: bool,
+    /// Frames waited for a new query's editor to exist before focusing it.
+    query_focus_attempts: u8,
+    /// Give the active table grid the keyboard focus on the next frame (after a tab switch).
+    grid_focus_pending: bool,
     /// One gpui-kit editor per query tab, index-aligned with `queries` and `None` until built.
     /// `ui::SqlEditor` owns the text, undo/redo, multi-cursor and search; `QueryTab::sql` mirrors
     /// it for the run/save/format paths.
@@ -2142,6 +2201,17 @@ pub struct AppView {
     /// The user's keymap overrides (command id -> keystrokes), edited on the Options window's
     /// 快捷键 page; see [`keymap`].
     shortcuts: BTreeMap<String, Vec<String>>,
+    /// Keep the object search when switching tabs (Options → General).
+    preserve_object_search: bool,
+    /// The most statements one query run may execute, 0 for no limit (Options → General).
+    max_statements_per_run: u32,
+    /// Stop a script at its first failing statement (Options → General).
+    stop_on_error: bool,
+    /// Each query tab's 信息 text, in a read-only editor (select, Shift+arrows, Ctrl+C), by tab id.
+    query_info_editors: std::collections::HashMap<u64, Entity<ui::SqlEditor>>,
+    /// The tab shown last frame, so a tab change (by click, Ctrl+Tab or a close) can move the
+    /// keyboard focus to the newly shown pane and, unless the search is kept, clear it.
+    last_shown_tab: Option<Option<TabTarget>>,
     /// The keystrokes (and contexts) the keymap was last bound with, so a change in the Options
     /// window can shadow the old ones (the keymap has no removal API).
     bound_keys: keymap::BoundKeys,
@@ -2201,6 +2271,16 @@ pub struct AppView {
     options_grid_show_comments: bool,
     /// The staged 数据 page toggle (grid field types), applied on OK.
     options_grid_show_types: bool,
+    /// The staged 常规 page toggle (keep the object search across tab switches), applied on OK.
+    options_preserve_object_search: bool,
+    /// The staged 常规 page statement limit (as typed) and stop-on-error toggle, applied on OK.
+    options_max_statements: String,
+    options_max_statements_input: Option<Entity<TextInput>>,
+    options_stop_on_error: bool,
+    /// The Options window's right-click menu on a setting: where, and the setting's label.
+    options_copy_menu: Option<(Point<Pixels>, String)>,
+    /// The setting the Options window points out (e.g. from the query's statement-limit notice).
+    options_highlight: Option<&'static str>,
     /// The staged 快捷键 page overrides, applied on OK.
     options_shortcuts: BTreeMap<String, Vec<String>>,
     /// The id of the 快捷键 row that is waiting for a keystroke, if any.
@@ -2442,11 +2522,13 @@ mod grid_input;
 mod grid_menu;
 mod grid_scroll;
 mod grid_toolbar;
+mod grid_value;
 mod grid_view;
 mod groups;
 mod import;
 mod info_pane;
 mod keymap;
+pub(crate) mod line_edit;
 mod list_ops;
 mod objects;
 mod options;
@@ -2459,6 +2541,7 @@ mod routine_view;
 mod runsql;
 mod sidebar;
 mod sql_completion;
+pub(crate) mod sql_lex;
 mod tabs;
 mod toolbar;
 mod transfer;
@@ -2585,6 +2668,25 @@ impl AppView {
             async {}
         })
         .detach();
+        // Workspace-wide commands, handled at app level so they work wherever the focus is.
+        {
+            let weak = cx.weak_entity();
+            (**cx).on_action(move |_: &NewQueryTab, cx: &mut App| {
+                let _ = weak.update(cx, |view, cx| view.open_new_query(cx));
+            });
+            let weak = cx.weak_entity();
+            (**cx).on_action(move |_: &CloseActiveTab, cx: &mut App| {
+                let _ = weak.update(cx, |view, cx| view.close_active_tab(cx));
+            });
+            let weak = cx.weak_entity();
+            (**cx).on_action(move |_: &NextTab, cx: &mut App| {
+                let _ = weak.update(cx, |view, cx| view.cycle_tab(1, cx));
+            });
+            let weak = cx.weak_entity();
+            (**cx).on_action(move |_: &PrevTab, cx: &mut App| {
+                let _ = weak.update(cx, |view, cx| view.cycle_tab(-1, cx));
+            });
+        }
         let app = cx.weak_entity();
         let app_entity = cx.entity();
         let tree_pane = cx.new(|cx| TreePane::new(app.clone(), cx));
@@ -2615,6 +2717,7 @@ impl AppView {
             designs: Vec::new(),
             queries: Vec::new(),
             active_design: None,
+            tab_sequence: RefCell::new(Vec::new()),
             next_design_id: 0,
             active_query: None,
             next_query_id: 0,
@@ -2627,6 +2730,7 @@ impl AppView {
             query_rename_blur: None,
             query_rename_focus_pending: false,
             query_list_focus: cx.focus_handle(),
+            query_timer_scheduled: false,
             query_sort: QuerySort::default(),
             query_grid: ColumnGrid::default(),
             backup_configs,
@@ -2686,6 +2790,8 @@ impl AppView {
             save_query_focus_pending: false,
             query_focus: cx.focus_handle(),
             query_focus_pending: false,
+            query_focus_attempts: 0,
+            grid_focus_pending: false,
             query_editors: Vec::new(),
             preview_editors: std::collections::HashMap::new(),
             completion_catalog: Arc::new(std::sync::RwLock::new(
@@ -2759,6 +2865,11 @@ impl AppView {
             grid_show_types: settings.grid_show_types,
             grid_field_layouts: settings.grid_field_layouts.clone(),
             shortcuts: settings.shortcuts.clone(),
+            preserve_object_search: settings.preserve_object_search,
+            max_statements_per_run: settings.max_statements_per_run,
+            stop_on_error: settings.stop_on_error,
+            query_info_editors: std::collections::HashMap::new(),
+            last_shown_tab: None,
             bound_keys,
             object_search: String::new(),
             backup_objects_scroll: ScrollHandle::new(),
@@ -2776,11 +2887,23 @@ impl AppView {
                         },
                         cx,
                     )
-                    .on_change(Rc::new(move |text, _window, cx| {
-                        let _ = weak.update(cx, |app, cx| {
-                            app.object_search = text.to_string();
-                            app.notify_object_pane(cx);
-                            cx.notify();
+                    .on_change(Rc::new({
+                        let weak = weak.clone();
+                        move |text, _window, cx| {
+                            let _ = weak.update(cx, |app, cx| {
+                                app.object_search = text.to_string();
+                                app.notify_object_pane(cx);
+                                cx.notify();
+                            });
+                        }
+                    }))
+                    // Esc clears the search and lists every object again. Deferred: this runs
+                    // inside the field's own key handler, and clearing writes back to the field,
+                    // which must not be updated while it is handling the key (that aborted the app).
+                    .on_cancel(Rc::new(move |_window, cx| {
+                        let weak = weak.clone();
+                        cx.defer(move |cx| {
+                            let _ = weak.update(cx, |app, cx| app.clear_object_search(cx));
                         });
                     }))
                 })
@@ -2812,6 +2935,12 @@ impl AppView {
             options_editor_word_wrap: settings.editor_word_wrap,
             options_grid_show_comments: settings.grid_show_comments,
             options_grid_show_types: settings.grid_show_types,
+            options_preserve_object_search: settings.preserve_object_search,
+            options_max_statements: settings.max_statements_per_run.to_string(),
+            options_max_statements_input: None,
+            options_stop_on_error: settings.stop_on_error,
+            options_copy_menu: None,
+            options_highlight: None,
             options_shortcuts: settings.shortcuts.clone(),
             recording_shortcut: None,
             options_shortcut_focus: keymap::COMMANDS.iter().map(|_| cx.focus_handle()).collect(),
@@ -3107,6 +3236,9 @@ impl AppView {
             grid_show_comments: self.grid_show_comments,
             grid_show_types: self.grid_show_types,
             shortcuts: self.shortcuts.clone(),
+            preserve_object_search: self.preserve_object_search,
+            max_statements_per_run: self.max_statements_per_run,
+            stop_on_error: self.stop_on_error,
         }) {
             // Preferences failing to persist is not worth a modal; note it in the log line only.
             let _ = error;
@@ -3951,9 +4083,56 @@ impl Render for AppView {
             }
         }
 
+        // When the shown tab changed (click, Ctrl+Tab, a close): give the newly shown pane the
+        // keyboard focus, and clear the object search unless the user keeps it.
+        let shown = self.current_tab(cx);
+        if self.last_shown_tab != Some(shown) {
+            let first = self.last_shown_tab.is_none();
+            self.last_shown_tab = Some(shown);
+            if !first {
+                if !self.preserve_object_search && !self.object_search.is_empty() {
+                    self.clear_object_search(cx);
+                }
+                match shown {
+                    None => {
+                        if let Some(pane) = self.object_pane.as_ref() {
+                            let focus = pane.read(cx).focus.clone();
+                            window.focus(&focus, cx);
+                        }
+                    }
+                    Some(TabTarget::Grid(_)) => self.grid_focus_pending = true,
+                    Some(TabTarget::Query(_)) => self.query_focus_pending = true,
+                    Some(TabTarget::Design(_)) => {}
+                }
+            }
+        }
+        if self.grid_focus_pending {
+            self.grid_focus_pending = false;
+            if self.active_query.is_none()
+                && let Some(grid) = self.active_grid.and_then(|index| self.grids.get(index))
+            {
+                let focus = grid.read(cx).focus.clone();
+                window.focus(&focus, cx);
+            }
+        }
         if self.query_focus_pending {
-            window.focus(&self.query_focus, cx);
-            self.query_focus_pending = false;
+            // Focus the editor itself so the caret is there and typing goes in. The editor is built
+            // on its first render, so a just-opened tab gets it on the next frame.
+            let editor = self
+                .active_query
+                .and_then(|index| self.query_editors.get(index).cloned().flatten());
+            let focused = editor
+                .is_some_and(|editor| editor.update(cx, |editor, cx| editor.focus(window, cx)));
+            if focused || self.active_query.is_none() || self.query_focus_attempts >= 5 {
+                if !focused {
+                    window.focus(&self.query_focus, cx);
+                }
+                self.query_focus_pending = false;
+                self.query_focus_attempts = 0;
+            } else {
+                self.query_focus_attempts += 1;
+                cx.notify();
+            }
         }
 
         if self.backup_name_focus_pending {
