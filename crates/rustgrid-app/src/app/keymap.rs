@@ -16,25 +16,29 @@ use gpui_kit::component::input::ShowCompletions;
 
 use super::{
     BACKUP_LIST_CONTEXT, CopyBackupFile, CopyQueryFile, CopyStatusSql, DESIGNER_CONTEXT,
-    GRID_STATUS_CONTEXT, PasteBackupFile, PasteQueryFile, QUERY_EDITOR_CONTEXT, QUERY_LIST_CONTEXT,
-    RenameBackupFile, RenameQueryFile, RunQuery, RunSelectedQuery, SaveDesign, SaveQuery,
-    SelectAllBackups, SelectAllOccurrences, SelectAllQueries, SelectAllStatusSql, TREE_CONTEXT,
-    TreeCollapse, TreeDown, TreeEnd, TreeExpand, TreeHome, TreeOpen, TreePageDown, TreePageUp,
-    TreeRename, TreeSelectAll, TreeUp,
+    GRID_STATUS_CONTEXT, OBJECT_LIST_CONTEXT, ObjectDown, ObjectEnd, ObjectHome, ObjectLeft,
+    ObjectOpen, ObjectPageDown, ObjectPageUp, ObjectRename, ObjectRight, ObjectSelectAll, ObjectUp,
+    PasteBackupFile, PasteQueryFile, QUERY_EDITOR_CONTEXT, QUERY_LIST_CONTEXT, RenameBackupFile,
+    RenameQueryFile, RunQuery, RunSelectedQuery, SaveDesign, SaveQuery, SelectAllBackups,
+    SelectAllOccurrences, SelectAllQueries, SelectAllStatusSql, TREE_CONTEXT, TreeCollapse,
+    TreeDown, TreeEnd, TreeExpand, TreeHome, TreeOpen, TreePageDown, TreePageUp, TreeRename,
+    TreeSelectAll, TreeUp,
 };
 
 /// Where a command lives, for grouping the 快捷键 page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CommandGroup {
     ConnectionTree,
+    ObjectList,
     QueryEditor,
     Designer,
     Lists,
 }
 
 impl CommandGroup {
-    pub(super) const ALL: [CommandGroup; 4] = [
+    pub(super) const ALL: [CommandGroup; 5] = [
         CommandGroup::ConnectionTree,
+        CommandGroup::ObjectList,
         CommandGroup::QueryEditor,
         CommandGroup::Designer,
         CommandGroup::Lists,
@@ -44,6 +48,7 @@ impl CommandGroup {
     pub(super) fn label_key(self) -> &'static str {
         match self {
             CommandGroup::ConnectionTree => "keymap.group.tree",
+            CommandGroup::ObjectList => "keymap.group.objects",
             CommandGroup::QueryEditor => "keymap.group.query_editor",
             CommandGroup::Designer => "keymap.group.designer",
             CommandGroup::Lists => "keymap.group.lists",
@@ -84,18 +89,46 @@ macro_rules! bind {
     };
 }
 
-/// A connection-tree navigation command bound to `keys` everywhere.
-macro_rules! tree_command {
-    ($id:literal, $label:literal, $keys:expr, $action:expr) => {
+/// A navigation command of `group` (key `context`) bound to `keys` on every platform.
+macro_rules! nav_command {
+    ($group:expr, $context:expr, $id:literal, $label:literal, $keys:expr, $action:expr) => {
         Command {
             id: $id,
             label_key: $label,
-            group: CommandGroup::ConnectionTree,
-            context: TREE_CONTEXT,
+            group: $group,
+            context: $context,
             defaults: $keys,
             mac_defaults: None,
             bind: bind!($action),
         }
+    };
+}
+
+/// A connection-tree navigation command.
+macro_rules! tree_command {
+    ($id:literal, $label:literal, $keys:expr, $action:expr) => {
+        nav_command!(
+            CommandGroup::ConnectionTree,
+            TREE_CONTEXT,
+            $id,
+            $label,
+            $keys,
+            $action
+        )
+    };
+}
+
+/// An object-list navigation command.
+macro_rules! object_command {
+    ($id:literal, $label:literal, $keys:expr, $action:expr) => {
+        nav_command!(
+            CommandGroup::ObjectList,
+            OBJECT_LIST_CONTEXT,
+            $id,
+            $label,
+            $keys,
+            $action
+        )
     };
 }
 
@@ -131,6 +164,32 @@ pub(super) const COMMANDS: &[Command] = &[
         "keymap.tree.select_all",
         &["secondary-a"],
         TreeSelectAll
+    ),
+    object_command!("objects.up", "keymap.objects.up", &["up"], ObjectUp),
+    object_command!("objects.down", "keymap.objects.down", &["down"], ObjectDown),
+    object_command!("objects.left", "keymap.objects.left", &["left"], ObjectLeft),
+    object_command!("objects.right", "keymap.objects.right", &["right"], ObjectRight),
+    object_command!(
+        "objects.page_up",
+        "keymap.objects.page_up",
+        &["pageup"],
+        ObjectPageUp
+    ),
+    object_command!(
+        "objects.page_down",
+        "keymap.objects.page_down",
+        &["pagedown"],
+        ObjectPageDown
+    ),
+    object_command!("objects.home", "keymap.objects.home", &["home"], ObjectHome),
+    object_command!("objects.end", "keymap.objects.end", &["end"], ObjectEnd),
+    object_command!("objects.open", "keymap.objects.open", &["enter"], ObjectOpen),
+    object_command!("objects.rename", "keymap.objects.rename", &["f2"], ObjectRename),
+    object_command!(
+        "objects.select_all",
+        "keymap.objects.select_all",
+        &["secondary-a"],
+        ObjectSelectAll
     ),
     Command {
         id: "query.run",

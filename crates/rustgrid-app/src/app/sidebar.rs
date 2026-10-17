@@ -293,8 +293,9 @@ impl NavRow {
     }
 }
 
-/// How long a pause ends a typed name: the next key starts a new one (Explorer-like).
-const TYPEAHEAD_RESET: std::time::Duration = std::time::Duration::from_millis(1000);
+/// How long a pause ends a typed name: the next key starts a new one (Explorer-like). Shared with
+/// the object list.
+pub(super) const TYPEAHEAD_RESET: std::time::Duration = std::time::Duration::from_millis(1000);
 
 /// The index of the parent of row `index`: the nearest row above it with a smaller depth.
 fn nav_parent(depths: &[usize], index: usize) -> Option<usize> {
@@ -307,7 +308,11 @@ fn nav_parent(depths: &[usize], index: usize) -> Option<usize> {
 /// The row a typed `prefix` jumps to: the first row after `current` (wrapping) whose label starts
 /// with it, ignoring case. A one-letter prefix starts after the current row, so repeating a letter
 /// cycles through the rows that begin with it; a longer prefix may stay on the current row.
-fn typeahead_target(labels: &[&str], current: Option<usize>, prefix: &str) -> Option<usize> {
+pub(super) fn typeahead_target(
+    labels: &[&str],
+    current: Option<usize>,
+    prefix: &str,
+) -> Option<usize> {
     if labels.is_empty() || prefix.is_empty() {
         return None;
     }
@@ -420,24 +425,11 @@ impl TreePane {
         ((height / 22.0).floor() as isize - 1).max(1)
     }
 
-    /// Scroll the row `id` into view if the last frame drew it outside the visible area. gpui's
-    /// scroll offset is negative as the content scrolls down, and stays within `-max_offset..0`.
+    /// Scroll the row `id` into view if the last frame drew it outside the visible area.
     fn reveal(&self, id: &str) {
-        let Some(row) = self.row_bounds.borrow().get(id).copied() else {
-            return;
-        };
-        let view = self.scroll.bounds();
-        let mut offset = self.scroll.offset();
-        if row.top() < view.top() {
-            offset.y += view.top() - row.top();
-        } else if row.bottom() > view.bottom() {
-            offset.y -= row.bottom() - view.bottom();
-        } else {
-            return;
+        if let Some(row) = self.row_bounds.borrow().get(id).copied() {
+            ui::reveal_vertically(&self.scroll, row);
         }
-        let max = self.scroll.max_offset();
-        offset.y = offset.y.min(px(0.0)).max(-max.y);
-        self.scroll.set_offset(offset);
     }
 
     /// Right: expand a collapsed row, or step into an expanded row's first child.

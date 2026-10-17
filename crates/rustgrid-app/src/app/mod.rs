@@ -147,6 +147,28 @@ gpui::actions!(
 /// open.
 const TREE_CONTEXT: &str = "ConnectionTree";
 
+// Object-list (Tables / Views / Functions pane) keyboard navigation (see `objects.rs`), in both
+// the 详细列表 and the column-major 平铺网格 layouts. Keymap commands, like the tree's.
+gpui::actions!(
+    objectlist,
+    [
+        ObjectUp,
+        ObjectDown,
+        ObjectLeft,
+        ObjectRight,
+        ObjectPageUp,
+        ObjectPageDown,
+        ObjectHome,
+        ObjectEnd,
+        ObjectOpen,
+        ObjectRename,
+        ObjectSelectAll
+    ]
+);
+
+/// Key context applied to the object list, for its navigation commands.
+const OBJECT_LIST_CONTEXT: &str = "ObjectList";
+
 /// Key context applied to the table designer, so Ctrl+S saves it and Tab walks its cells while the
 /// designer (or one of its cell editors) holds focus.
 const DESIGNER_CONTEXT: &str = "TableDesigner";
@@ -1377,6 +1399,11 @@ struct ObjectPane {
     /// Focus target for the list, so F2 reaches [`AppView::begin_rename_table`].
     focus: FocusHandle,
     theme: Theme,
+    /// The layout of the last render, which decides what the arrow keys do.
+    mode: ViewMode,
+    /// The name typed so far to jump to an object, and when its last key arrived.
+    typeahead: String,
+    typeahead_at: Option<std::time::Instant>,
 }
 
 /// The tab strip above the content pane (Object / tables / queries). Owns its own horizontal
