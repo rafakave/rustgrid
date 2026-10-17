@@ -154,34 +154,85 @@ mod nav_tests {
 
     #[test]
     fn detail_list_moves_by_row_and_page_and_ignores_left_right() {
-        assert_eq!(object_nav_target(None, 10, ObjectStep::Down, DETAIL, 4), Some(0));
-        assert_eq!(object_nav_target(Some(3), 10, ObjectStep::Down, DETAIL, 4), Some(4));
-        assert_eq!(object_nav_target(Some(9), 10, ObjectStep::Down, DETAIL, 4), None);
-        assert_eq!(object_nav_target(Some(0), 10, ObjectStep::Up, DETAIL, 4), None);
-        assert_eq!(object_nav_target(Some(3), 10, ObjectStep::PageDown, DETAIL, 4), Some(7));
-        assert_eq!(object_nav_target(Some(8), 10, ObjectStep::PageDown, DETAIL, 4), Some(9));
-        assert_eq!(object_nav_target(Some(2), 10, ObjectStep::PageUp, DETAIL, 4), Some(0));
-        assert_eq!(object_nav_target(Some(5), 10, ObjectStep::Left, DETAIL, 4), None);
-        assert_eq!(object_nav_target(Some(5), 10, ObjectStep::Home, DETAIL, 4), Some(0));
-        assert_eq!(object_nav_target(Some(5), 10, ObjectStep::End, DETAIL, 4), Some(9));
+        assert_eq!(
+            object_nav_target(None, 10, ObjectStep::Down, DETAIL, 4),
+            Some(0)
+        );
+        assert_eq!(
+            object_nav_target(Some(3), 10, ObjectStep::Down, DETAIL, 4),
+            Some(4)
+        );
+        assert_eq!(
+            object_nav_target(Some(9), 10, ObjectStep::Down, DETAIL, 4),
+            None
+        );
+        assert_eq!(
+            object_nav_target(Some(0), 10, ObjectStep::Up, DETAIL, 4),
+            None
+        );
+        assert_eq!(
+            object_nav_target(Some(3), 10, ObjectStep::PageDown, DETAIL, 4),
+            Some(7)
+        );
+        assert_eq!(
+            object_nav_target(Some(8), 10, ObjectStep::PageDown, DETAIL, 4),
+            Some(9)
+        );
+        assert_eq!(
+            object_nav_target(Some(2), 10, ObjectStep::PageUp, DETAIL, 4),
+            Some(0)
+        );
+        assert_eq!(
+            object_nav_target(Some(5), 10, ObjectStep::Left, DETAIL, 4),
+            None
+        );
+        assert_eq!(
+            object_nav_target(Some(5), 10, ObjectStep::Home, DETAIL, 4),
+            Some(0)
+        );
+        assert_eq!(
+            object_nav_target(Some(5), 10, ObjectStep::End, DETAIL, 4),
+            Some(9)
+        );
     }
 
     #[test]
     fn grid_left_right_move_one_column() {
         // 10 items, 4 per column: columns [0..4) [4..8) [8..10).
-        assert_eq!(object_nav_target(Some(1), 10, ObjectStep::Right, 4, 8), Some(5));
-        assert_eq!(object_nav_target(Some(5), 10, ObjectStep::Right, 4, 8), Some(9));
-        assert_eq!(object_nav_target(Some(7), 10, ObjectStep::Right, 4, 8), Some(9));
-        assert_eq!(object_nav_target(Some(9), 10, ObjectStep::Right, 4, 8), None);
-        assert_eq!(object_nav_target(Some(5), 10, ObjectStep::Left, 4, 8), Some(1));
+        assert_eq!(
+            object_nav_target(Some(1), 10, ObjectStep::Right, 4, 8),
+            Some(5)
+        );
+        assert_eq!(
+            object_nav_target(Some(5), 10, ObjectStep::Right, 4, 8),
+            Some(9)
+        );
+        assert_eq!(
+            object_nav_target(Some(7), 10, ObjectStep::Right, 4, 8),
+            Some(9)
+        );
+        assert_eq!(
+            object_nav_target(Some(9), 10, ObjectStep::Right, 4, 8),
+            None
+        );
+        assert_eq!(
+            object_nav_target(Some(5), 10, ObjectStep::Left, 4, 8),
+            Some(1)
+        );
         assert_eq!(object_nav_target(Some(2), 10, ObjectStep::Left, 4, 8), None);
         // Up / Down run through the columns in order.
-        assert_eq!(object_nav_target(Some(3), 10, ObjectStep::Down, 4, 8), Some(4));
+        assert_eq!(
+            object_nav_target(Some(3), 10, ObjectStep::Down, 4, 8),
+            Some(4)
+        );
     }
 
     #[test]
     fn an_empty_list_goes_nowhere() {
-        assert_eq!(object_nav_target(None, 0, ObjectStep::Down, DETAIL, 4), None);
+        assert_eq!(
+            object_nav_target(None, 0, ObjectStep::Down, DETAIL, 4),
+            None
+        );
     }
 }
 
@@ -2242,9 +2293,9 @@ impl Render for ObjectPane {
             .key_context(OBJECT_LIST_CONTEXT)
             .track_focus(&self.focus)
             // Keyboard navigation: keymap commands, rebindable from Options → Shortcuts.
-            .on_action(cx.listener(|this, _: &ObjectUp, _window, cx| {
-                this.object_step(ObjectStep::Up, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &ObjectUp, _window, cx| this.object_step(ObjectStep::Up, cx)),
+            )
             .on_action(cx.listener(|this, _: &ObjectDown, _window, cx| {
                 this.object_step(ObjectStep::Down, cx)
             }))
@@ -2263,13 +2314,15 @@ impl Render for ObjectPane {
             .on_action(cx.listener(|this, _: &ObjectHome, _window, cx| {
                 this.object_step(ObjectStep::Home, cx)
             }))
-            .on_action(cx.listener(|this, _: &ObjectEnd, _window, cx| {
-                this.object_step(ObjectStep::End, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &ObjectEnd, _window, cx| {
+                    this.object_step(ObjectStep::End, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &ObjectOpen, _window, cx| this.object_open(cx)))
-            .on_action(cx.listener(|this, _: &ObjectRename, window, cx| {
-                this.object_rename(window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &ObjectRename, window, cx| this.object_rename(window, cx)),
+            )
             .on_action(
                 cx.listener(|this, _: &ObjectSelectAll, _window, cx| this.object_select_all(cx)),
             )

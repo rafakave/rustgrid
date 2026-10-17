@@ -168,7 +168,12 @@ pub(super) const COMMANDS: &[Command] = &[
     object_command!("objects.up", "keymap.objects.up", &["up"], ObjectUp),
     object_command!("objects.down", "keymap.objects.down", &["down"], ObjectDown),
     object_command!("objects.left", "keymap.objects.left", &["left"], ObjectLeft),
-    object_command!("objects.right", "keymap.objects.right", &["right"], ObjectRight),
+    object_command!(
+        "objects.right",
+        "keymap.objects.right",
+        &["right"],
+        ObjectRight
+    ),
     object_command!(
         "objects.page_up",
         "keymap.objects.page_up",
@@ -183,8 +188,18 @@ pub(super) const COMMANDS: &[Command] = &[
     ),
     object_command!("objects.home", "keymap.objects.home", &["home"], ObjectHome),
     object_command!("objects.end", "keymap.objects.end", &["end"], ObjectEnd),
-    object_command!("objects.open", "keymap.objects.open", &["enter"], ObjectOpen),
-    object_command!("objects.rename", "keymap.objects.rename", &["f2"], ObjectRename),
+    object_command!(
+        "objects.open",
+        "keymap.objects.open",
+        &["enter"],
+        ObjectOpen
+    ),
+    object_command!(
+        "objects.rename",
+        "keymap.objects.rename",
+        &["f2"],
+        ObjectRename
+    ),
     object_command!(
         "objects.select_all",
         "keymap.objects.select_all",
