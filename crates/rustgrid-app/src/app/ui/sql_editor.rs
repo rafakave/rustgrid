@@ -205,8 +205,6 @@ impl SqlEditor {
         });
     }
 
-    /// Put the keyboard focus (and the caret) in the editor. Returns `false` before its first
-    /// render, when the inner editor does not exist yet.
     /// Colour ranges of the text (replacing the previous ones), e.g. the 信息 log's errors.
     pub(crate) fn set_decorations(
         &mut self,

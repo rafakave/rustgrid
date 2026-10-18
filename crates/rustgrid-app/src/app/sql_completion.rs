@@ -60,6 +60,9 @@ pub(crate) struct CompletionSource {
     scope: Arc<std::sync::RwLock<CompletionScope>>,
     /// Starts loading a table's columns into the catalog: `(connection, database, table)`.
     load_columns: Option<ColumnLoader>,
+    /// The column targets a popup has already waited for, `(connection, database, table)`: a load
+    /// that failed or was too slow must not cost every later popup the whole [`COLUMN_WAIT`] again.
+    waited: Arc<std::sync::Mutex<std::collections::HashSet<(usize, String, String)>>>,
 }
 
 /// Asks the app to load a table's columns into the completion catalog.
@@ -75,6 +78,7 @@ impl CompletionSource {
             catalog,
             scope: Arc::new(std::sync::RwLock::new(CompletionScope::default())),
             load_columns: None,
+            waited: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -117,6 +121,23 @@ impl CompletionSource {
                 !catalog
                     .columns
                     .contains_key(&(connection, database.clone(), table.clone()))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The targets of `missing` a popup has not waited for yet, recorded as waited for: the wait
+    /// is worth it once per table, not on every keystroke.
+    fn take_unwaited(
+        &self,
+        connection: usize,
+        missing: &[(String, String)],
+    ) -> Vec<(String, String)> {
+        let mut waited = self.waited.lock().expect("completion wait lock");
+        missing
+            .iter()
+            .filter(|(database, table)| {
+                waited.insert((connection, database.clone(), table.clone()))
             })
             .cloned()
             .collect()
@@ -243,10 +264,16 @@ impl CompletionProvider for SqlCompletionProvider {
             // Deferred: the app may be mid-update while the editor asks for completions.
             cx.defer(move |cx| loader(cx, connection, database, table));
         }
+        // Wait for a target only the first time it is asked for: a load that failed or was too slow
+        // then does not delay every later popup by the whole COLUMN_WAIT.
+        let waiting = self.source.take_unwaited(connection, &missing);
+        if waiting.is_empty() {
+            return Task::ready(Ok(respond(&self.source, &context)));
+        }
         let source = self.source.clone();
         cx.spawn(async move |cx| {
             let started = std::time::Instant::now();
-            while started.elapsed() < COLUMN_WAIT && !source.missing_columns(&missing).is_empty() {
+            while started.elapsed() < COLUMN_WAIT && !source.missing_columns(&waiting).is_empty() {
                 cx.background_executor()
                     .timer(Duration::from_millis(40))
                     .await;

@@ -214,10 +214,9 @@ impl GridView {
                     if keystroke.key == "escape" {
                         cx.stop_propagation();
                         this.close_value_editor(window, cx);
-                    } else if keystroke.key == "f2" && !secondary {
-                        cx.stop_propagation();
-                        this.save_value_editor(window, cx);
-                    } else if keystroke.key == "enter" && secondary {
+                    } else if (keystroke.key == "f2" && !secondary)
+                        || (keystroke.key == "enter" && secondary)
+                    {
                         cx.stop_propagation();
                         this.save_value_editor(window, cx);
                     }

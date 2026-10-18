@@ -1327,6 +1327,21 @@ fn is_function_key(key: &str) -> bool {
         .is_some_and(|number| (1..=24).contains(&number))
 }
 
+/// The element id of the statement-limit setting, so other views can point it out.
+pub(super) const OPTIONS_MAX_STATEMENTS: &str = "options-max-statements";
+
+/// A section's name in the Options navigation.
+fn options_section_label(section: OptionsSection) -> String {
+    match section {
+        OptionsSection::General => t!("options.general"),
+        OptionsSection::Editor => t!("options.editor"),
+        OptionsSection::Shortcuts => t!("options.shortcuts"),
+        OptionsSection::Data => t!("options.data"),
+        OptionsSection::About => t!("options.about"),
+    }
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1350,19 +1365,4 @@ mod tests {
         assert_eq!(record("enter"), None);
         assert_eq!(record("space"), None);
     }
-}
-
-/// The element id of the statement-limit setting, so other views can point it out.
-pub(super) const OPTIONS_MAX_STATEMENTS: &str = "options-max-statements";
-
-/// A section's name in the Options navigation.
-fn options_section_label(section: OptionsSection) -> String {
-    match section {
-        OptionsSection::General => t!("options.general"),
-        OptionsSection::Editor => t!("options.editor"),
-        OptionsSection::Shortcuts => t!("options.shortcuts"),
-        OptionsSection::Data => t!("options.data"),
-        OptionsSection::About => t!("options.about"),
-    }
-    .to_string()
 }

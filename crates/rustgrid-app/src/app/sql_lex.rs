@@ -258,6 +258,30 @@ fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
 }
 
+/// Whether the delimiter starting at `at` ends a statement there. A word-like delimiter (`GO`,
+/// `END`) only does so when no word character follows it, so `CATEGORY` does not end one for
+/// `DELIMITER GO` (the `mysql` client reads its delimiter at the end of a line); a symbolic one
+/// (`//`, `$$`) matches anywhere, as `1$$` is how a routine's last line often reads.
+fn delimiter_ends_here(delimiter: &str, bytes: &[u8], at: usize) -> bool {
+    let word_like = delimiter
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    if !word_like {
+        return true;
+    }
+    bytes
+        .get(at + delimiter.len())
+        .is_none_or(|next| !(next.is_ascii_alphanumeric() || *next == b'_'))
+}
+
+/// Whether a custom delimiter (not the default `;`, which the scanner handles itself) starts at
+/// `at`, so the word / number / variable scans stop there instead of swallowing it (`END$$`).
+fn delimiter_starts(delimiter: &str, bytes: &[u8], at: usize) -> bool {
+    delimiter != ";"
+        && bytes[at..].starts_with(delimiter.as_bytes())
+        && delimiter_ends_here(delimiter, bytes, at)
+}
+
 /// Scan `sql`, reporting each coloured span in order. `mysql`: MySQL / MariaDB rules (`#`
 /// comments, backslash escapes and `"…"` strings; no dollar quoting).
 fn scan(sql: &str, mysql: bool, mut emit: impl FnMut(Range<usize>, Token)) {
@@ -291,7 +315,7 @@ fn scan(sql: &str, mysql: bool, mut emit: impl FnMut(Range<usize>, Token)) {
         let byte = bytes[i];
         // A custom delimiter (`$$`, `//`, ...) wins over everything but strings and comments
         // already being skipped, so `END //` ends the routine rather than starting a comment.
-        if delimiter != ";" && sql[i..].starts_with(delimiter.as_str()) {
+        if delimiter_starts(&delimiter, bytes, i) {
             emit(i..i + delimiter.len(), Token::Delimiter);
             i += delimiter.len();
             continue;
@@ -359,7 +383,10 @@ fn scan(sql: &str, mysql: bool, mut emit: impl FnMut(Range<usize>, Token)) {
             }
             b'0'..=b'9' => {
                 let start = i;
-                while i < len && (is_word_byte(bytes[i]) || bytes[i] == b'.') {
+                while i < len
+                    && (is_word_byte(bytes[i]) || bytes[i] == b'.')
+                    && !delimiter_starts(&delimiter, bytes, i)
+                {
                     // An exponent's sign: 1e-5.
                     if matches!(bytes[i], b'e' | b'E')
                         && matches!(bytes.get(i + 1), Some(b'+' | b'-'))
@@ -373,13 +400,18 @@ fn scan(sql: &str, mysql: bool, mut emit: impl FnMut(Range<usize>, Token)) {
             b'@' => {
                 // A variable (@x, @@global.x): never a keyword.
                 i += 1;
-                while i < len && (is_word_byte(bytes[i]) || matches!(bytes[i], b'@' | b'.')) {
+                while i < len
+                    && (is_word_byte(bytes[i]) || matches!(bytes[i], b'@' | b'.'))
+                    && !delimiter_starts(&delimiter, bytes, i)
+                {
                     i += 1;
                 }
             }
             byte if is_word_byte(byte) => {
                 let start = i;
-                while i < len && is_word_byte(bytes[i]) {
+                // A delimiter that is made of word characters (`$$`) ends the word here: `END$$`
+                // would otherwise be read as one identifier.
+                while i < len && is_word_byte(bytes[i]) && !delimiter_starts(&delimiter, bytes, i) {
                     i += 1;
                 }
                 let word = &sql[start..i];
@@ -680,6 +712,23 @@ mod tests {
         );
         // `//` is the delimiter there, not a comment.
         assert!(comments(sql, true).is_empty());
+    }
+
+    #[test]
+    fn a_word_delimiter_only_ends_a_statement_at_a_word_boundary() {
+        // `GO` inside `CATEGORY` is not the delimiter; the one at the end of the line is.
+        let sql = "DELIMITER GO\nSELECT CATEGORY, 1 FROM t GO\nDELIMITER ;\nSELECT 2;";
+        assert_eq!(split(sql), ["SELECT CATEGORY, 1 FROM t", "SELECT 2"]);
+        // A symbolic delimiter still matches without a space before it.
+        let sql = "DELIMITER $$\nSELECT 1$$\nDELIMITER ;\nSELECT 2;";
+        assert_eq!(split(sql), ["SELECT 1", "SELECT 2"]);
+        // The common dump idiom: `END$$` with no space.
+        let sql =
+            "DELIMITER $$\nCREATE PROCEDURE p() BEGIN SELECT 1; END$$\nDELIMITER ;\nSELECT 2;";
+        assert_eq!(
+            split(sql),
+            ["CREATE PROCEDURE p() BEGIN SELECT 1; END", "SELECT 2"]
+        );
     }
 
     #[test]
